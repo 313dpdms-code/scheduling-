@@ -91,7 +91,7 @@ input[type=text]:focus{border-color:#378ADD;background:#fff}
     <p style="font-size:13px;color:#aaa;margin-bottom:.6rem">공유받은 링크로 입장</p>
     <div style="display:flex;gap:8px">
       <input type="text" id="joinCode" placeholder="링크 또는 방 코드 입력"/>
-      <button class="btn" onclick="joinRoom()">입장</button>
+      <button class="btn btn-primary" onclick="joinRoom()">일정 보기</button>
     </div>
     <div id="homeError" style="font-size:12px;color:#E24B4A;margin-top:8px"></div>
   </div>
@@ -122,7 +122,26 @@ input[type=text]:focus{border-color:#378ADD;background:#fff}
       <span class="my-badge" id="myBadge"></span>
       <span style="margin-left:auto;font-size:12px;color:#888"><span class="online-dot"></span>실시간 동기화</span>
     </div>
-    <div class="hint">가능한 날짜를 클릭 또는 드래그로 표시 → 하단 링크 복사 → 친구에게 공유</div>
+    <div class="hint" id="calHint"></div>
+    <div id="joinBtnWrap" style="display:none;margin-bottom:.75rem">
+      <button class="btn btn-primary" onclick="window.openJoinPanel()" style="width:100%">+ 내 일정 추가하기</button>
+    </div>
+    <div id="joinPanel" style="display:none;background:#f8f8f8;border-radius:12px;padding:1rem;margin-bottom:.75rem">
+      <div style="font-size:13px;font-weight:600;color:#1a1a1a;margin-bottom:.75rem">참여하기</div>
+      <div class="field" style="margin-bottom:.75rem">
+        <label>이름</label>
+        <input type="text" id="joinName" placeholder="홍길동"/>
+      </div>
+      <div class="field" style="margin-bottom:.75rem">
+        <label>색상</label>
+        <div class="color-row" id="joinColorPick"></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="window.closeJoinPanel()" style="flex:1">취소</button>
+        <button class="btn btn-primary" onclick="window.submitJoin()" style="flex:1">참여하기</button>
+      </div>
+      <div id="joinPanelError" style="font-size:12px;color:#E24B4A;margin-top:6px"></div>
+    </div>
     <div class="participants" id="participantTags"></div>
     <div class="info-bar" id="infoBar"></div>
     <div class="month-nav">
@@ -271,13 +290,22 @@ function setupRealtimeListener(){
 
 function goToCal(){
   document.getElementById('calTitle').textContent=roomData.title;
-  const c=COLORS[me.colorIdx];
-  const badge=document.getElementById('myBadge');
-  badge.textContent=me.name;
-  badge.style.cssText=`background:${c.light};color:${c.text};border-color:${c.bg}`;
   const url=`${location.origin}${location.pathname}?room=${roomId}`;
   document.getElementById('shareUrl').value=url;
   document.getElementById('roomCodeDisp').textContent=roomId;
+  if(me){
+    const c=COLORS[me.colorIdx];
+    const badge=document.getElementById('myBadge');
+    badge.textContent=me.name;
+    badge.style.cssText=`background:${c.light};color:${c.text};border-color:${c.bg}`;
+    badge.style.display='';
+    document.getElementById('joinBtnWrap').style.display='none';
+    document.getElementById('calHint').textContent='가능한 날짜를 클릭 또는 드래그로 표시 → 하단 링크 복사 → 친구에게 공유';
+  } else {
+    document.getElementById('myBadge').style.display='none';
+    document.getElementById('joinBtnWrap').style.display='block';
+    document.getElementById('calHint').textContent='일정을 확인하세요. 내 일정을 추가하려면 아래 버튼을 눌러주세요.';
+  }
   renderParticipantTags();
   renderCal();
   show('s-cal');
@@ -344,7 +372,7 @@ async function toggleDay(key){
 }
 
 window.onDown=function(key,isCur){
-  if(!isCur)return;
+  if(!isCur||!me)return;
   isDragging=true;
   dragMode=!getMyDays().includes(key);
   applyDrag(key);
@@ -372,6 +400,41 @@ async function flushDrag(){
   dragQueue.forEach(q=>{const[op,k]=q.split(':');if(op==='add'&&!myDays.includes(k))myDays.push(k);else if(op==='remove'){const i=myDays.indexOf(k);if(i>=0)myDays.splice(i,1);}});
   dragQueue.clear();
   await update(ref(db,`rooms/${roomId}/participants/${me.name}`),{days:myDays});
+}
+
+// ── 참여 패널 ─────────────────────────────────────
+window.openJoinPanel=function(){
+  const taken=Object.values(roomData.participants||{}).map(p=>p.colorIdx);
+  const avail=COLORS.map((_,i)=>i).filter(i=>!taken.includes(i));
+  let joinColor=avail[0]??0;
+  const el=document.getElementById('joinColorPick');
+  el.innerHTML=COLORS.map((c,i)=>`<div class="cdot${i===joinColor?' sel':''}${taken.includes(i)?' taken':''}" style="background:${c.bg}" id="jcdot-${i}" onclick="${taken.includes(i)?'':'window.selectJoinColor('+i+')'}"></div>`).join('');
+  window._joinColor=joinColor;
+  document.getElementById('joinPanel').style.display='block';
+  document.getElementById('joinBtnWrap').style.display='none';
+  document.getElementById('joinName').focus();
+}
+window.selectJoinColor=function(i){
+  window._joinColor=i;
+  document.querySelectorAll('[id^=jcdot-]').forEach(el=>el.classList.toggle('sel',parseInt(el.id.split('-')[1])===i));
+}
+window.closeJoinPanel=function(){
+  document.getElementById('joinPanel').style.display='none';
+  document.getElementById('joinBtnWrap').style.display='block';
+}
+window.submitJoin=async function(){
+  const name=document.getElementById('joinName').value.trim();
+  if(!name){document.getElementById('joinPanelError').textContent='이름을 입력하세요';return}
+  document.getElementById('joinPanelError').textContent='';
+  const existing=roomData.participants&&roomData.participants[name];
+  const colorIdx=existing?existing.colorIdx:window._joinColor;
+  if(!existing){
+    await update(ref(db,`rooms/${roomId}/participants/${name}`),{name,colorIdx,days:[]});
+  }
+  me={name,colorIdx};
+  localStorage.setItem("sched_"+roomId, JSON.stringify({name}));
+  document.getElementById('joinPanel').style.display='none';
+  goToCal();
 }
 
 function renderLegend(){
@@ -423,16 +486,17 @@ function showCopied(){const m=document.getElementById('copiedMsg');m.classList.a
     const code=new URLSearchParams(location.search).get('room');
     if(!code)return;
     document.getElementById('joinCode').value=code;
+    // 먼저 보기 전용으로 입장
     await window.joinRoom();
-    // 이름 화면에서 localStorage에 저장된 이름 있으면 자동 입장
+    // localStorage에 저장된 이름 있으면 자동으로 me 설정
     const saved=localStorage.getItem('sched_'+code);
     if(saved){
       const {name}=JSON.parse(saved);
-      // 해당 이름이 이미 방에 있는지 확인
       const snap=await get(ref(db,`rooms/${code}/participants/${name}`));
       if(snap.exists()){
-        document.getElementById('myName').value=name;
-        await window.enterRoom();
+        const p=snap.val();
+        me={name,colorIdx:p.colorIdx};
+        goToCal();
       }
     }
   }catch(e){}
