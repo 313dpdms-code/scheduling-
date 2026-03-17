@@ -140,6 +140,10 @@ input[type=text]:focus{border-color:#378ADD;background:#fff}
     </div>
     <div class="share-section">
       <div class="stitle">📎 이 링크를 복사해서 친구에게 공유하세요</div>
+      <div style="margin-bottom:8px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:12px;color:#888">방 코드</span>
+        <span id="roomCodeDisp" style="font-family:monospace;font-size:16px;font-weight:700;letter-spacing:3px;color:#378ADD;background:#EFF6FF;padding:4px 12px;border-radius:8px"></span>
+      </div>
       <div class="url-row">
         <input type="text" id="shareUrl" readonly/>
         <button class="btn btn-primary" onclick="copyUrl()">복사</button>
@@ -244,6 +248,7 @@ window.enterRoom=async function(){
     await update(ref(db,`rooms/${roomId}/participants/${name}`),{name,colorIdx,days:[]});
   }
   me={name,colorIdx};
+  localStorage.setItem("sched_"+roomId, JSON.stringify({name}));
   const [sy,sm]=roomData.start.split('-').map(Number);
   currentMonth=new Date(sy,sm-1);
   setupRealtimeListener();
@@ -272,6 +277,7 @@ function goToCal(){
   badge.style.cssText=`background:${c.light};color:${c.text};border-color:${c.bg}`;
   const url=`${location.origin}${location.pathname}?room=${roomId}`;
   document.getElementById('shareUrl').value=url;
+  document.getElementById('roomCodeDisp').textContent=roomId;
   renderParticipantTags();
   renderCal();
   show('s-cal');
@@ -411,13 +417,23 @@ window.copyUrl=function(){
 }
 function showCopied(){const m=document.getElementById('copiedMsg');m.classList.add('show');setTimeout(()=>m.classList.remove('show'),2500);}
 
-// auto-join from URL
+// auto-join from URL + localStorage
 (async()=>{
   try{
     const code=new URLSearchParams(location.search).get('room');
-    if(code){
-      document.getElementById('joinCode').value=code;
-      await window.joinRoom();
+    if(!code)return;
+    document.getElementById('joinCode').value=code;
+    await window.joinRoom();
+    // 이름 화면에서 localStorage에 저장된 이름 있으면 자동 입장
+    const saved=localStorage.getItem('sched_'+code);
+    if(saved){
+      const {name}=JSON.parse(saved);
+      // 해당 이름이 이미 방에 있는지 확인
+      const snap=await get(ref(db,`rooms/${code}/participants/${name}`));
+      if(snap.exists()){
+        document.getElementById('myName').value=name;
+        await window.enterRoom();
+      }
     }
   }catch(e){}
 })();
