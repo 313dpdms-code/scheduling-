@@ -537,12 +537,17 @@ function getMyDays() {
 // ─── 참여자 태그 렌더링 ───
 function renderParticipantTags() {
   const el = document.getElementById('participantTags');
+  const isOwner = me && roomData.createdBy && roomData.createdBy === me.name;
   el.innerHTML = getParticipants().map(p => {
     const c = COLORS[p.colorIdx];
     const isMe = me && p.name === me.name;
-    const removeBtn = isMe
-      ? `<button class="tag-remove" onclick="window.removeMyEntry()" title="내 일정 삭제">✕</button>`
-      : '';
+    // 내 항목: 본인 삭제 / 방장: 모든 참여자 삭제 가능
+    let removeBtn = '';
+    if (isMe) {
+      removeBtn = `<button class="tag-remove" onclick="window.removeParticipant('${p.name}')" title="내 일정 삭제">✕</button>`;
+    } else if (isOwner) {
+      removeBtn = `<button class="tag-remove" onclick="window.removeParticipant('${p.name}')" title="${p.name} 일정 삭제">✕</button>`;
+    }
     return `<div class="tag" style="background:${c.light};color:${c.text};border-color:${c.bg}">
       <span style="width:8px;height:8px;border-radius:50%;background:${c.bg};display:inline-block"></span>
       ${p.name}${isMe?' (나)':''}${removeBtn}
@@ -550,21 +555,36 @@ function renderParticipantTags() {
   }).join('');
 }
 
-// ─── 내 일정 삭제 ───
-window.removeMyEntry = async function() {
-  if (!me || !roomId) return;
-  if (!confirm(`"${me.name}"의 일정을 삭제할까요? 이 작업은 되돌릴 수 없어요.`)) return;
-  await remove(ref(db, `rooms/${roomId}/participants/${me.name}`));
-  localStorage.removeItem("sched_" + roomId);
-  me = null;
-  if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-  const snap = await get(ref(db, `rooms/${roomId}`));
-  if (snap.exists()) {
-    roomData = snap.val();
-    setupRealtimeListener();
-    goToCal();
-  } else {
-    goHome();
+// ─── 참여자 일정 삭제 (본인 또는 방장만 가능) ───
+window.removeParticipant = async function(name) {
+  if (!roomId) return;
+  const isMe = me && me.name === name;
+  const isOwner = me && roomData.createdBy === me.name;
+  if (!isMe && !isOwner) return; // 권한 없으면 차단
+
+  const msg = isMe
+    ? `내 일정을 삭제할까요? 이 작업은 되돌릴 수 없어요.`
+    : `"${name}"의 일정을 삭제할까요? 이 작업은 되돌릴 수 없어요.`;
+  if (!confirm(msg)) return;
+
+  try {
+    await remove(ref(db, `rooms/${roomId}/participants/${name}`));
+    // 본인 삭제한 경우 me 초기화
+    if (isMe) {
+      localStorage.removeItem("sched_" + roomId);
+      me = null;
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+      const snap = await get(ref(db, `rooms/${roomId}`));
+      if (snap.exists()) {
+        roomData = snap.val();
+        setupRealtimeListener();
+        goToCal();
+      } else {
+        goHome();
+      }
+    }
+  } catch(e) {
+    alert('삭제에 실패했어요. 다시 시도해주세요.');
   }
 };
 
